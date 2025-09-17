@@ -1,29 +1,59 @@
 const video = document.getElementById('webcam');
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
-// Since we removed the AI model, we can hide the loading div immediately.
-document.getElementById('loading').style.display = 'none';
 document.getElementById('main-content').style.display = 'block';
 
 const startBtn = document.getElementById('start-btn');
 const timerDisplay = document.getElementById('timer');
-const durationInput = document.getElementById('timeout-duration');
-const statusMessage = document.getElementById('status-message'); // Make sure this div is in your HTML
+const minDurationInput = document.getElementById('min-duration');
+const maxDurationInput = document.getElementById('max-duration');
+const statusMessage = document.getElementById('status-message');
 
 let timerInterval;
 let timeLeft;
+let initialSessionDuration;
 let isTimerRunning = false;
 let animationFrameId;
 let lastFrameData = null;
+let praiseTimeout;
 
-const PENALTY_SECONDS = 30;
+// --- CONFIGURATION ---
+const MOTION_THRESHOLD = 5; // Adjust this based on your camera/lighting
+const POSITIVE_PHRASES = ["Well done boy.", "You're making me proud.", "Good boy.", "Keep it up."];
+const NEGATIVE_PHRASES = ["Naughty boy, more time added.", "When will you learn? More time added.", "You need to learn to obey."];
+let maleVoice;
+// --- END CONFIGURATION ---
 
-// This is the key setting to adjust. Higher numbers require more movement.
-// Start with a low number like 5 and adjust based on your camera/lighting.
-const MOTION_THRESHOLD = 5; 
+// ### SPEECH SYNTHESIS SETUP ###
+function setupSpeech() {
+    const voices = window.speechSynthesis.getVoices();
+    // Find a UK male voice, with fallbacks
+    maleVoice = voices.find(voice => voice.name === 'Google UK English Male') ||
+                voices.find(voice => voice.name === 'Daniel') ||
+                voices.find(voice => voice.lang.startsWith('en') && voice.name.toLowerCase().includes('male'));
 
-// The safe zone remains the same
-const safeZone = { x: 0.25, y: 0.15, width: 0.5, height: 0.7 };
+    if (!maleVoice) {
+        console.warn("No male voice found, using default.");
+        maleVoice = voices.find(voice => voice.lang.startsWith('en')); // Fallback to any English voice
+    }
+}
+// Voices are loaded asynchronously
+window.speechSynthesis.onvoiceschanged = setupSpeech;
+setupSpeech(); // Initial call
+
+function speak(text) {
+    if (!maleVoice) {
+        console.error("Voice not ready.");
+        return;
+    }
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.voice = maleVoice;
+    utterance.rate = 0.9;
+    window.speechSynthesis.cancel(); // Stop any previous speech
+    window.speechSynthesis.speak(utterance);
+}
+// ### END SPEECH SECTION ###
+
 
 async function init() {
     try {
@@ -32,72 +62,54 @@ async function init() {
         video.addEventListener('loadeddata', () => {
             canvas.width = video.videoWidth;
             canvas.height = video.videoHeight;
-            detectMotionLoop(); // Start the new detection loop
+            detectMotionLoop();
         });
     } catch (error) {
         console.error("Error initializing:", error);
-        statusMessage.innerText = "Error: Could not access webcam. Please check permissions.";
+        statusMessage.innerText = "Error: Could not access webcam.";
     }
 }
 
 function detectMotionLoop() {
-    // Define the pixel area of the safe zone
+    const safeZone = { x: 0.25, y: 0.15, width: 0.5, height: 0.7 };
     const zx = Math.floor(safeZone.x * canvas.width);
     const zy = Math.floor(safeZone.y * canvas.height);
     const zw = Math.floor(safeZone.width * canvas.width);
     const zh = Math.floor(safeZone.height * canvas.height);
     
-    // Draw the video frame onto the hidden canvas to read its pixels
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     const currentFrameData = ctx.getImageData(zx, zy, zw, zh).data;
 
     let motionDetected = false;
     if (lastFrameData) {
         let pixelDifference = 0;
-        // Compare the pixels of the current frame to the last frame
         for (let i = 0; i < currentFrameData.length; i += 4) {
-            // Check the difference in the red, green, and blue channels
             const diff = Math.abs(currentFrameData[i] - lastFrameData[i]) + 
                          Math.abs(currentFrameData[i + 1] - lastFrameData[i + 1]) +
                          Math.abs(currentFrameData[i + 2] - lastFrameData[i + 2]);
             pixelDifference += diff;
         }
-        // Calculate the average difference per pixel
         const avgDifference = pixelDifference / (currentFrameData.length / 4);
-
         if (avgDifference > MOTION_THRESHOLD) {
             motionDetected = true;
         }
     }
 
-    // Store the current frame for the next comparison
     lastFrameData = currentFrameData;
 
-    // Clear the canvas and draw the visual safe zone box
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    drawSafeZone(motionDetected);
+    ctx.strokeStyle = motionDetected ? 'limegreen' : 'red';
+    ctx.lineWidth = 5;
+    ctx.strokeRect(zx, zy, zw, zh);
 
-    // If timer is running and NO motion is detected, penalize
     if (isTimerRunning && !motionDetected) {
-        penalizeUser("No motion detected in zone.");
+        penalizeUser();
         flashScreenRed();
     }
 
     animationFrameId = requestAnimationFrame(detectMotionLoop);
 }
 
-function drawSafeZone(isMotion) {
-    ctx.strokeStyle = isMotion ? 'limegreen' : 'red';
-    ctx.lineWidth = 5;
-    ctx.strokeRect(
-        safeZone.x * canvas.width,
-        safeZone.y * canvas.height,
-        safeZone.width * canvas.width,
-        safeZone.height * canvas.height
-    );
-}
-
-// All functions below this line are the same as before
 function flashScreenRed() {
     document.body.style.backgroundColor = '#ffcccc';
     setTimeout(() => { document.body.style.backgroundColor = '#f0f2f5'; }, 500);
@@ -105,56 +117,72 @@ function flashScreenRed() {
 
 function startTimer() {
     if (isTimerRunning) return;
-
     isTimerRunning = true;
     startBtn.disabled = true;
-    durationInput.disabled = true;
-    
-    if (!timeLeft || timeLeft <= 0) {
-        timeLeft = parseInt(durationInput.value, 10);
-    }
-    timerDisplay.textContent = timeLeft;
+    minDurationInput.disabled = true;
+    maxDurationInput.disabled = true;
 
     timerInterval = setInterval(() => {
         timeLeft--;
         timerDisplay.textContent = timeLeft;
         if (timeLeft <= 0) {
             clearInterval(timerInterval);
+            clearTimeout(praiseTimeout); // Stop any pending praise
             isTimerRunning = false;
-            alert("Time out complete! Well done!");
+            const completionMessage = `Session complete. You served a total of ${initialSessionDuration} seconds. Well done.`;
+            alert(completionMessage);
+            speak(completionMessage);
             startBtn.disabled = false;
-            durationInput.disabled = false;
-            timerDisplay.textContent = durationInput.value;
+            minDurationInput.disabled = false;
+            maxDurationInput.disabled = false;
         }
     }, 1000);
+    
+    scheduleRandomPraise();
 }
 
-function penalizeUser(reason) {
+function penalizeUser() {
     if (!isTimerRunning) return;
     
     clearInterval(timerInterval);
+    clearTimeout(praiseTimeout); // Stop praise schedule
     isTimerRunning = false;
 
-    statusMessage.textContent = `PENALTY! +${PENALTY_SECONDS}s. Reason: ${reason}`;
+    const penaltyTime = Math.floor(Math.random() * 61) + 30; // Random penalty between 30-90 seconds
+    const randomNegativePhrase = NEGATIVE_PHRASES[Math.floor(Math.random() * NEGATIVE_PHRASES.length)];
+    
+    speak(randomNegativePhrase);
+    statusMessage.textContent = `PENALTY! +${penaltyTime} seconds.`;
     setTimeout(() => { statusMessage.textContent = ''; }, 4000);
     
-    timeLeft += PENALTY_SECONDS;
+    timeLeft += penaltyTime;
     timerDisplay.textContent = timeLeft;
 
     setTimeout(() => { startTimer(); }, 1000);
 }
 
+function scheduleRandomPraise() {
+    if (!isTimerRunning) return;
+    // Schedule praise for a random time between 25 and 45 seconds from now
+    const randomDelay = (Math.random() * 20000) + 25000;
+    praiseTimeout = setTimeout(() => {
+        const randomPositivePhrase = POSITIVE_PHRASES[Math.floor(Math.random() * POSITIVE_PHRASES.length)];
+        speak(randomPositivePhrase);
+        scheduleRandomPraise(); // Schedule the next one
+    }, randomDelay);
+}
+
 startBtn.addEventListener('click', () => {
-    timeLeft = parseInt(durationInput.value, 10);
+    const min = parseInt(minDurationInput.value, 10);
+    const max = parseInt(maxDurationInput.value, 10);
+    if (min >= max) {
+        alert("Min time must be less than max time.");
+        return;
+    }
+    timeLeft = Math.floor(Math.random() * (max - min + 1)) + min;
+    initialSessionDuration = timeLeft; // Store the starting time
+    timerDisplay.textContent = timeLeft;
     startTimer();
 });
 
-document.addEventListener('visibilitychange', () => {
-    if (document.hidden && isTimerRunning) {
-        penalizeUser("Tab was hidden.");
-        flashScreenRed();
-    }
-});
-
-// Run the main function
 init();
