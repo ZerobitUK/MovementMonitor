@@ -69,7 +69,6 @@ async function init() {
 }
 
 function detectMotionLoop() {
-    // This function's logic remains the same
     const safeZone = { x: 0.25, y: 0.15, width: 0.5, height: 0.7 };
     const zx = Math.floor(safeZone.x * canvas.width);
     const zy = Math.floor(safeZone.y * canvas.height);
@@ -114,19 +113,16 @@ function flashScreenRed() {
 
 function startTimer() {
     if (isTimerRunning) return;
-    isTimerRunning = true;
-    startBtn.disabled = true;
-    minDurationInput.disabled = true;
-    maxDurationInput.disabled = true;
+    isTimerRunning = true; // Motion detection penalties are now active
 
     timerInterval = setInterval(() => {
         timeLeft--;
-        timerDisplay.textContent = formatTime(timeLeft); // Use the formatter
+        timerDisplay.textContent = formatTime(timeLeft);
         if (timeLeft <= 0) {
             clearInterval(timerInterval);
             clearTimeout(praiseTimeout);
             isTimerRunning = false;
-            const completionMessage = `Session complete. You served a total of ${initialSessionDurationInMinutes} minutes. Well done.`;
+            const completionMessage = `Session complete. You served a total of ${initialSessionDurationInMinutes} ${initialSessionDurationInMinutes > 1 ? 'minutes' : 'minute'}. Well done.`;
             alert(completionMessage);
             speak(completionMessage);
             startBtn.disabled = false;
@@ -145,9 +141,8 @@ function penalizeUser() {
     clearTimeout(praiseTimeout);
     isTimerRunning = false;
 
-    // Generate random penalty in MINUTES
     const penaltyMinutes = Math.floor(Math.random() * (PENALTY_MINUTES_MAX - PENALTY_MINUTES_MIN + 1)) + PENALTY_MINUTES_MIN;
-    const penaltySeconds = penaltyMinutes * 60; // Convert to seconds
+    const penaltySeconds = penaltyMinutes * 60;
 
     const randomNegativePhrase = NEGATIVE_PHRASES[Math.floor(Math.random() * NEGATIVE_PHRASES.length)];
     const penaltyMessage = `${penaltyMinutes} more ${penaltyMinutes > 1 ? 'minutes' : 'minute'} added.`;
@@ -156,7 +151,7 @@ function penalizeUser() {
     statusMessage.textContent = `PENALTY! +${penaltyMinutes} min.`;
     setTimeout(() => { statusMessage.textContent = ''; }, 4000);
     
-    timeLeft += penaltySeconds; // Add penalty in seconds
+    timeLeft += penaltySeconds;
     timerDisplay.textContent = formatTime(timeLeft);
 
     setTimeout(() => { startTimer(); }, 1000);
@@ -172,21 +167,46 @@ function scheduleRandomPraise() {
     }, randomDelay);
 }
 
+// ### MODIFIED SECTION ###
 startBtn.addEventListener('click', () => {
+    // Disable buttons immediately to prevent multiple clicks
+    startBtn.disabled = true;
+    minDurationInput.disabled = true;
+    maxDurationInput.disabled = true;
+
+    // Calculate the total session time in advance
     const min = parseInt(minDurationInput.value, 10);
     const max = parseInt(maxDurationInput.value, 10);
     if (min > max) {
         alert("Min time cannot be greater than max time.");
+        startBtn.disabled = false;
+        minDurationInput.disabled = false;
+        maxDurationInput.disabled = false;
         return;
     }
-    // Generate random time in MINUTES
     const randomMinutes = Math.floor(Math.random() * (max - min + 1)) + min;
-    initialSessionDurationInMinutes = randomMinutes; // Store starting minutes
-    
-    timeLeft = randomMinutes * 60; // Convert to SECONDS for countdown
-    
-    timerDisplay.textContent = formatTime(timeLeft);
-    startTimer();
+    initialSessionDurationInMinutes = randomMinutes;
+    timeLeft = randomMinutes * 60;
+
+    // --- Start 10-second grace period ---
+    let graceSeconds = 10;
+    statusMessage.textContent = `Get into position...`;
+    timerDisplay.textContent = graceSeconds; // Show the grace countdown
+    speak("Get into position.");
+
+    const graceInterval = setInterval(() => {
+        graceSeconds--;
+        timerDisplay.textContent = graceSeconds;
+        if (graceSeconds <= 0) {
+            clearInterval(graceInterval);
+            statusMessage.textContent = `Time out started!`;
+            setTimeout(() => { statusMessage.textContent = '' }, 2000);
+            
+            // Grace period is over, start the main timer
+            timerDisplay.textContent = formatTime(timeLeft);
+            startTimer();
+        }
+    }, 1000);
 });
 
 init();
