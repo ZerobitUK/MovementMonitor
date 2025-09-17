@@ -25,6 +25,8 @@ let maleVoice;
 const POSITIVE_PHRASES = ["Well done boy.", "You're making me proud.", "Good boy.", "Keep it up."];
 const NEGATIVE_PHRASES = ["Naughty boy.", "When will you learn?", "You need to learn to obey."];
 const safeZone = { x: 0.25, y: 0.15, width: 0.5, height: 0.7 };
+// A list of keypoints to check for. More robust for back-facing views.
+const UPPER_BODY_KEYPOINTS = ['nose', 'left_eye', 'right_eye', 'left_ear', 'right_ear', 'left_shoulder', 'right_shoulder'];
 
 // ### LOGGING & SPEECH ###
 function addToLog(message) {
@@ -32,7 +34,7 @@ function addToLog(message) {
     const logEntry = document.createElement('p');
     logEntry.textContent = `[${timestamp}] ${message}`;
     sessionLog.appendChild(logEntry);
-    sessionLog.scrollTop = sessionLog.scrollHeight; // Auto-scroll
+    sessionLog.scrollTop = sessionLog.scrollHeight;
 }
 
 function setupSpeech() {
@@ -78,6 +80,22 @@ async function init() {
     }
 }
 
+// ### NEW, MORE ROBUST CHECKING FUNCTION ###
+function isUpperBodyInZone(pose, zone) {
+    // Check if ANY of the upper body keypoints are inside the zone
+    for (const keypointName of UPPER_BODY_KEYPOINTS) {
+        const keypoint = pose.keypoints.find(k => k.name === keypointName);
+        // Lowered confidence score to 0.3 for better back-of-head detection
+        if (keypoint && keypoint.score > 0.3) {
+            const mirroredX = canvas.width - keypoint.x;
+            if (mirroredX > zone.x && mirroredX < zone.x + zone.width && keypoint.y > zone.y && keypoint.y < zone.y + zone.height) {
+                return true; // Found a valid keypoint in the zone
+            }
+        }
+    }
+    return false; // No valid keypoints were found in the zone
+}
+
 async function detectPoseLoop() {
     const poses = await detector.estimatePoses(video);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -86,24 +104,27 @@ async function detectPoseLoop() {
     const zy = safeZone.y * canvas.height;
     const zw = safeZone.width * canvas.width;
     const zh = safeZone.height * canvas.height;
+    const zoneRect = { x: zx, y: zy, width: zw, height: zh };
 
     let isInside = false;
     if (poses && poses.length > 0) {
-        const nose = poses[0].keypoints.find(k => k.name === 'nose');
-        if (nose && nose.score > 0.4) {
-            const mirroredX = canvas.width - nose.x;
-            if (isAttentionCheckActive) {
+        const mainPose = poses[0];
+        if (isAttentionCheckActive) {
+            const nose = mainPose.keypoints.find(k => k.name === 'nose');
+            if (nose && nose.score > 0.3) {
+                const mirroredX = canvas.width - nose.x;
                 const distance = Math.sqrt(Math.pow(mirroredX - attentionCheckTarget.x, 2) + Math.pow(nose.y - attentionCheckTarget.y, 2));
                 if (distance < attentionCheckTarget.radius) {
                     handleAttentionCheckSuccess();
                 }
-            } else {
-                 isInside = (mirroredX > zx && mirroredX < zx + zw && nose.y > zy && nose.y < zy + zh);
             }
+        } else {
+            // Use the new robust check
+            isInside = isUpperBodyInZone(mainPose, zoneRect);
         }
     }
     
-    // Drawing
+    // Drawing logic...
     if (isAttentionCheckActive) {
         ctx.beginPath();
         ctx.arc(attentionCheckTarget.x, attentionCheckTarget.y, attentionCheckTarget.radius, 0, 2 * Math.PI);
@@ -117,7 +138,6 @@ async function detectPoseLoop() {
         ctx.strokeRect(zx, zy, zw, zh);
     }
     
-    // Penalize if timer is running and user is out of bounds (and not in a check)
     if (isTimerRunning && !isInside && !isAttentionCheckActive) {
         penalizeUser("Moved out of the safe zone.");
     }
@@ -134,7 +154,6 @@ function startTimer() {
         timeLeft--;
         timerDisplay.textContent = formatTime(timeLeft);
         if (timeLeft <= 0) {
-            // ... completion logic ...
             clearInterval(timerInterval);
             clearTimeout(praiseTimeout);
             clearTimeout(attentionCheckHandle);
@@ -184,12 +203,12 @@ function penalizeUser(reason) {
 // --- ATTENTION CHECKS ---
 function scheduleRandomAttentionCheck() {
     if (!isTimerRunning) return;
-    const randomDelay = (Math.random() * 45000) + 45000; // Every 45-90 seconds
+    const randomDelay = (Math.random() * 45000) + 45000;
     attentionCheckHandle = setTimeout(startAttentionCheck, randomDelay);
 }
 
 function startAttentionCheck() {
-    isTimerRunning = false; // Pause timer
+    isTimerRunning = false;
     isAttentionCheckActive = true;
     clearInterval(timerInterval);
     clearTimeout(praiseTimeout);
@@ -202,7 +221,6 @@ function startAttentionCheck() {
     addToLog("Attention check started.");
     statusMessage.textContent = "ATTENTION CHECK!";
     
-    // Failsafe: if user doesn't comply in 15 seconds, penalize
     attentionCheckTimeout = setTimeout(() => {
         if (isAttentionCheckActive) {
             isAttentionCheckActive = false;
@@ -223,7 +241,6 @@ function handleAttentionCheckSuccess() {
 
 // --- PRAISE ---
 function scheduleRandomPraise() {
-    // ... same as before
     if (!isTimerRunning) return;
     const randomDelay = (Math.random() * 20000) + 25000;
     praiseTimeout = setTimeout(() => {
@@ -236,13 +253,11 @@ function scheduleRandomPraise() {
 
 // ### EVENT LISTENERS ###
 startBtn.addEventListener('click', () => {
-    // ... Grace period logic is the same ...
     startBtn.disabled = true;
     minDurationInput.disabled = true;
     maxDurationInput.disabled = true;
-
-    failureCount = 0; // Reset failures for new session
-    sessionLog.innerHTML = ''; // Clear log on new start
+    failureCount = 0;
+    sessionLog.innerHTML = '';
 
     const min = parseInt(minDurationInput.value, 10);
     const max = parseInt(maxDurationInput.value, 10);
