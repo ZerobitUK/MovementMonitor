@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Meditation Assistant</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Meditation Assistant</h1>
+        <p>Find a comfortable position. When you are ready, begin the session. The assistant will gently remind you to remain still if it detects movement.</p>
+        
+        <video id="video" width="300" height="225" autoplay muted></video>
+        
+        <canvas id="canvas" style="display: none;"></canvas>
+
+        <button id="toggleButton">Start Session</button>
+        <p id="status">Session not started.</p>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>
