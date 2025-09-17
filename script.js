@@ -1,38 +1,44 @@
+// --- Element References ---
 const video = document.getElementById('webcam');
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
-document.getElementById('main-content').style.display = 'block';
-
+const loadingDiv = document.getElementById('loading');
+const mainContent = document.getElementById('main-content');
 const startBtn = document.getElementById('start-btn');
 const timerDisplay = document.getElementById('timer');
 const minDurationInput = document.getElementById('min-duration');
 const maxDurationInput = document.getElementById('max-duration');
 const statusMessage = document.getElementById('status-message');
+const sessionLog = document.getElementById('session-log');
+const clearLogBtn = document.getElementById('clear-log-btn');
 
-let timerInterval;
-let timeLeft; // This will now store total seconds
-let initialSessionDurationInMinutes;
-let isTimerRunning = false;
-let animationFrameId;
-let lastFrameData = null;
-let praiseTimeout;
-
-// --- CONFIGURATION ---
-const MOTION_THRESHOLD = 3; // Lower this if it's too sensitive
-const PENALTY_MINUTES_MIN = 1; // Minimum penalty in minutes
-const PENALTY_MINUTES_MAX = 3; // Maximum penalty in minutes
-const POSITIVE_PHRASES = ["Well done boy.", "You're making me proud.", "Good boy.", "Keep it up."];
-const NEGATIVE_PHRASES = ["Naughty boy. More time added.", "When will you learn?", "You need to learn to obey. More time added."];
+// --- State Variables ---
+let detector;
+let timerInterval, praiseTimeout, attentionCheckTimeout, attentionCheckHandle;
+let timeLeft, initialSessionDurationInMinutes;
+let isTimerRunning = false, isAttentionCheckActive = false;
+let failureCount = 0;
+let attentionCheckTarget = { x: 0, y: 0, radius: 40 };
 let maleVoice;
-// --- END CONFIGURATION ---
 
-// ### SPEECH SYNTHESIS SETUP ###
+// --- Configuration ---
+const POSITIVE_PHRASES = ["Well done boy.", "You're making me proud.", "Good boy.", "Keep it up."];
+const NEGATIVE_PHRASES = ["Naughty boy.", "When will you learn?", "You need to learn to obey."];
+const safeZone = { x: 0.25, y: 0.15, width: 0.5, height: 0.7 };
+
+// ### LOGGING & SPEECH ###
+function addToLog(message) {
+    const timestamp = new Date().toLocaleTimeString();
+    const logEntry = document.createElement('p');
+    logEntry.textContent = `[${timestamp}] ${message}`;
+    sessionLog.appendChild(logEntry);
+    sessionLog.scrollTop = sessionLog.scrollHeight; // Auto-scroll
+}
+
 function setupSpeech() {
     const voices = window.speechSynthesis.getVoices();
-    maleVoice = voices.find(voice => voice.name === 'Google UK English Male') ||
-                voices.find(voice => voice.name === 'Daniel') ||
-                voices.find(voice => voice.lang.startsWith('en') && voice.name.toLowerCase().includes('male'));
-    if (!maleVoice) maleVoice = voices.find(voice => voice.lang.startsWith('en'));
+    maleVoice = voices.find(v => v.name === 'Google UK English Male') || voices.find(v => v.lang.startsWith('en') && v.name.toLowerCase().includes('male'));
+    if (!maleVoice) maleVoice = voices.find(v => v.lang.startsWith('en'));
 }
 window.speechSynthesis.onvoiceschanged = setupSpeech;
 setupSpeech();
@@ -45,9 +51,8 @@ function speak(text) {
     window.speechSynthesis.cancel();
     window.speechSynthesis.speak(utterance);
 }
-// ### END SPEECH SECTION ###
 
-// ### HELPER FUNCTION to format time ###
+// ### CORE LOGIC ###
 function formatTime(totalSeconds) {
     const minutes = Math.floor(totalSeconds / 60);
     const seconds = totalSeconds % 60;
@@ -56,75 +61,88 @@ function formatTime(totalSeconds) {
 
 async function init() {
     try {
+        const model = poseDetection.SupportedModels.MoveNet;
+        detector = await poseDetection.createDetector(model, { modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING });
         const stream = await navigator.mediaDevices.getUserMedia({ video: true });
         video.srcObject = stream;
         video.addEventListener('loadeddata', () => {
             canvas.width = video.videoWidth;
             canvas.height = video.videoHeight;
-            detectMotionLoop();
+            loadingDiv.style.display = 'none';
+            mainContent.style.display = 'block';
+            detectPoseLoop();
         });
     } catch (error) {
-        statusMessage.innerText = "Error: Could not access webcam.";
+        console.error("Init Error:", error);
+        loadingDiv.innerText = "Error loading model or webcam.";
     }
 }
 
-function detectMotionLoop() {
-    const safeZone = { x: 0.25, y: 0.15, width: 0.5, height: 0.7 };
-    const zx = Math.floor(safeZone.x * canvas.width);
-    const zy = Math.floor(safeZone.y * canvas.height);
-    const zw = Math.floor(safeZone.width * canvas.width);
-    const zh = Math.floor(safeZone.height * canvas.height);
-    
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    const currentFrameData = ctx.getImageData(zx, zy, zw, zh).data;
-
-    let motionDetected = false;
-    if (lastFrameData) {
-        let pixelDifference = 0;
-        for (let i = 0; i < currentFrameData.length; i += 4) {
-            const diff = Math.abs(currentFrameData[i] - lastFrameData[i]) + 
-                         Math.abs(currentFrameData[i + 1] - lastFrameData[i + 1]) +
-                         Math.abs(currentFrameData[i + 2] - lastFrameData[i + 2]);
-            pixelDifference += diff;
-        }
-        const avgDifference = pixelDifference / (currentFrameData.length / 4);
-        if (avgDifference > MOTION_THRESHOLD) {
-            motionDetected = true;
-        }
-    }
-    lastFrameData = currentFrameData;
-
+async function detectPoseLoop() {
+    const poses = await detector.estimatePoses(video);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.strokeStyle = motionDetected ? 'limegreen' : 'red';
-    ctx.lineWidth = 5;
-    ctx.strokeRect(zx, zy, zw, zh);
 
-    if (isTimerRunning && !motionDetected) {
-        penalizeUser();
-        flashScreenRed();
+    const zx = safeZone.x * canvas.width;
+    const zy = safeZone.y * canvas.height;
+    const zw = safeZone.width * canvas.width;
+    const zh = safeZone.height * canvas.height;
+
+    let isInside = false;
+    if (poses && poses.length > 0) {
+        const nose = poses[0].keypoints.find(k => k.name === 'nose');
+        if (nose && nose.score > 0.4) {
+            const mirroredX = canvas.width - nose.x;
+            if (isAttentionCheckActive) {
+                const distance = Math.sqrt(Math.pow(mirroredX - attentionCheckTarget.x, 2) + Math.pow(nose.y - attentionCheckTarget.y, 2));
+                if (distance < attentionCheckTarget.radius) {
+                    handleAttentionCheckSuccess();
+                }
+            } else {
+                 isInside = (mirroredX > zx && mirroredX < zx + zw && nose.y > zy && nose.y < zy + zh);
+            }
+        }
     }
-    animationFrameId = requestAnimationFrame(detectMotionLoop);
+    
+    // Drawing
+    if (isAttentionCheckActive) {
+        ctx.beginPath();
+        ctx.arc(attentionCheckTarget.x, attentionCheckTarget.y, attentionCheckTarget.radius, 0, 2 * Math.PI);
+        ctx.fillStyle = 'rgba(255, 0, 0, 0.5)';
+        ctx.fill();
+        ctx.strokeStyle = 'red';
+        ctx.stroke();
+    } else {
+        ctx.strokeStyle = isInside ? 'limegreen' : 'red';
+        ctx.lineWidth = 5;
+        ctx.strokeRect(zx, zy, zw, zh);
+    }
+    
+    // Penalize if timer is running and user is out of bounds (and not in a check)
+    if (isTimerRunning && !isInside && !isAttentionCheckActive) {
+        penalizeUser("Moved out of the safe zone.");
+    }
+    
+    requestAnimationFrame(detectPoseLoop);
 }
 
-function flashScreenRed() {
-    document.body.style.backgroundColor = '#ffcccc';
-    setTimeout(() => { document.body.style.backgroundColor = '#f0f2f5'; }, 500);
-}
-
+// ### TIMER AND EVENT FUNCTIONS ###
 function startTimer() {
     if (isTimerRunning) return;
-    isTimerRunning = true; // Motion detection penalties are now active
+    isTimerRunning = true;
 
     timerInterval = setInterval(() => {
         timeLeft--;
         timerDisplay.textContent = formatTime(timeLeft);
         if (timeLeft <= 0) {
+            // ... completion logic ...
             clearInterval(timerInterval);
             clearTimeout(praiseTimeout);
+            clearTimeout(attentionCheckHandle);
             isTimerRunning = false;
-            const completionMessage = `Session complete. You served a total of ${initialSessionDurationInMinutes} ${initialSessionDurationInMinutes > 1 ? 'minutes' : 'minute'}. Well done.`;
-            alert(completionMessage);
-            speak(completionMessage);
+            const msg = `Session complete. You served ${initialSessionDurationInMinutes} ${initialSessionDurationInMinutes > 1 ? 'minutes' : 'minute'}.`;
+            addToLog("SESSION COMPLETE.");
+            alert(msg);
+            speak(`${msg} Well done.`);
             startBtn.disabled = false;
             minDurationInput.disabled = false;
             maxDurationInput.disabled = false;
@@ -132,67 +150,111 @@ function startTimer() {
     }, 1000);
     
     scheduleRandomPraise();
+    scheduleRandomAttentionCheck();
 }
 
-function penalizeUser() {
+function penalizeUser(reason) {
     if (!isTimerRunning) return;
     
+    failureCount++;
+    isTimerRunning = false;
     clearInterval(timerInterval);
     clearTimeout(praiseTimeout);
-    isTimerRunning = false;
+    clearTimeout(attentionCheckHandle);
 
-    const penaltyMinutes = Math.floor(Math.random() * (PENALTY_MINUTES_MAX - PENALTY_MINUTES_MIN + 1)) + PENALTY_MINUTES_MIN;
+    let minPenalty, maxPenalty;
+    if (failureCount === 1) { minPenalty = 1; maxPenalty = 2; }
+    else if (failureCount === 2) { minPenalty = 2; maxPenalty = 4; }
+    else { minPenalty = 3; maxPenalty = 6; }
+    
+    const penaltyMinutes = Math.floor(Math.random() * (maxPenalty - minPenalty + 1)) + minPenalty;
     const penaltySeconds = penaltyMinutes * 60;
-
-    const randomNegativePhrase = NEGATIVE_PHRASES[Math.floor(Math.random() * NEGATIVE_PHRASES.length)];
-    const penaltyMessage = `${penaltyMinutes} more ${penaltyMinutes > 1 ? 'minutes' : 'minute'} added.`;
-
-    speak(`${randomNegativePhrase} ${penaltyMessage}`);
+    const penaltyMsg = `${penaltyMinutes} more ${penaltyMinutes > 1 ? 'minutes' : 'minute'}`;
+    
+    speak(`${NEGATIVE_PHRASES[Math.floor(Math.random() * NEGATIVE_PHRASES.length)]} ${penaltyMsg}.`);
+    addToLog(`PENALTY: +${penaltyMinutes} min. Reason: ${reason}`);
     statusMessage.textContent = `PENALTY! +${penaltyMinutes} min.`;
-    setTimeout(() => { statusMessage.textContent = ''; }, 4000);
     
     timeLeft += penaltySeconds;
     timerDisplay.textContent = formatTime(timeLeft);
-
-    setTimeout(() => { startTimer(); }, 1000);
+    
+    setTimeout(() => { statusMessage.textContent = ''; startTimer(); }, 4000);
 }
 
+// --- ATTENTION CHECKS ---
+function scheduleRandomAttentionCheck() {
+    if (!isTimerRunning) return;
+    const randomDelay = (Math.random() * 45000) + 45000; // Every 45-90 seconds
+    attentionCheckHandle = setTimeout(startAttentionCheck, randomDelay);
+}
+
+function startAttentionCheck() {
+    isTimerRunning = false; // Pause timer
+    isAttentionCheckActive = true;
+    clearInterval(timerInterval);
+    clearTimeout(praiseTimeout);
+
+    attentionCheckTarget.x = Math.random() * (canvas.width * 0.8) + (canvas.width * 0.1);
+    attentionCheckTarget.y = Math.random() * (canvas.height * 0.8) + (canvas.height * 0.1);
+
+    const msg = "Attention check. Move to the red circle.";
+    speak(msg);
+    addToLog("Attention check started.");
+    statusMessage.textContent = "ATTENTION CHECK!";
+    
+    // Failsafe: if user doesn't comply in 15 seconds, penalize
+    attentionCheckTimeout = setTimeout(() => {
+        if (isAttentionCheckActive) {
+            isAttentionCheckActive = false;
+            penalizeUser("Failed attention check.");
+        }
+    }, 15000);
+}
+
+function handleAttentionCheckSuccess() {
+    clearTimeout(attentionCheckTimeout);
+    isAttentionCheckActive = false;
+    speak("Good.");
+    addToLog("Attention check passed.");
+    statusMessage.textContent = "Check passed!";
+    setTimeout(() => { statusMessage.textContent = '' }, 2000);
+    startTimer();
+}
+
+// --- PRAISE ---
 function scheduleRandomPraise() {
+    // ... same as before
     if (!isTimerRunning) return;
     const randomDelay = (Math.random() * 20000) + 25000;
     praiseTimeout = setTimeout(() => {
-        const randomPositivePhrase = POSITIVE_PHRASES[Math.floor(Math.random() * POSITIVE_PHRASES.length)];
-        speak(randomPositivePhrase);
+        const phrase = POSITIVE_PHRASES[Math.floor(Math.random() * POSITIVE_PHRASES.length)];
+        speak(phrase);
+        addToLog(`Praise: "${phrase}"`);
         scheduleRandomPraise();
     }, randomDelay);
 }
 
-// ### MODIFIED SECTION ###
+// ### EVENT LISTENERS ###
 startBtn.addEventListener('click', () => {
-    // Disable buttons immediately to prevent multiple clicks
+    // ... Grace period logic is the same ...
     startBtn.disabled = true;
     minDurationInput.disabled = true;
     maxDurationInput.disabled = true;
 
-    // Calculate the total session time in advance
+    failureCount = 0; // Reset failures for new session
+    sessionLog.innerHTML = ''; // Clear log on new start
+
     const min = parseInt(minDurationInput.value, 10);
     const max = parseInt(maxDurationInput.value, 10);
-    if (min > max) {
-        alert("Min time cannot be greater than max time.");
-        startBtn.disabled = false;
-        minDurationInput.disabled = false;
-        maxDurationInput.disabled = false;
-        return;
-    }
     const randomMinutes = Math.floor(Math.random() * (max - min + 1)) + min;
     initialSessionDurationInMinutes = randomMinutes;
     timeLeft = randomMinutes * 60;
 
-    // --- Start 10-second grace period ---
     let graceSeconds = 10;
     statusMessage.textContent = `Get into position...`;
-    timerDisplay.textContent = graceSeconds; // Show the grace countdown
+    timerDisplay.textContent = graceSeconds;
     speak("Get into position.");
+    addToLog(`New session starting for ${randomMinutes} ${randomMinutes > 1 ? 'minutes' : 'minute'}.`);
 
     const graceInterval = setInterval(() => {
         graceSeconds--;
@@ -201,12 +263,14 @@ startBtn.addEventListener('click', () => {
             clearInterval(graceInterval);
             statusMessage.textContent = `Time out started!`;
             setTimeout(() => { statusMessage.textContent = '' }, 2000);
-            
-            // Grace period is over, start the main timer
             timerDisplay.textContent = formatTime(timeLeft);
             startTimer();
         }
     }, 1000);
+});
+
+clearLogBtn.addEventListener('click', () => {
+    sessionLog.innerHTML = '';
 });
 
 init();
