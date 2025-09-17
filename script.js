@@ -19,7 +19,8 @@ let isOnCooldown = false;
 let voices = [];
 let sessionTimerInterval;
 let timeRemaining = 0;
-let praiseTimeoutId; // NEW: To hold the random praise timer
+let praiseTimeoutId;
+let maxSessionSeconds = 0; // NEW: To store the user-defined maximum session length
 
 // --- FUNCTIONS ---
 
@@ -36,26 +37,28 @@ function formatTime(seconds) {
 function speak(text) {
     if (window.speechSynthesis.speaking) return; 
     const utterance = new SpeechSynthesisUtterance(text);
-    const gentleVoice = voices.find(v => v.name.includes('Google UK') || v.name.includes('Samantha') || v.name.includes('Female'));
-    if (gentleVoice) utterance.voice = gentleVoice;
+    const preferredVoiceName = "Google UK English Male";
+    let selectedVoice = voices.find(voice => voice.name === preferredVoiceName);
+    if (!selectedVoice) {
+        selectedVoice = voices.find(v => v.name.includes('Google UK') || v.name.includes('Female'));
+    }
+    if (selectedVoice) {
+        utterance.voice = selectedVoice;
+    }
     utterance.pitch = 0.9;
     utterance.rate = 0.9;
     window.speechSynthesis.speak(utterance);
 }
 
-// NEW: Function to schedule a random encouragement message
+// Function to schedule a random encouragement message
 function scheduleRandomPraise() {
-    // Set a random delay between 45 and 90 seconds
     const randomDelay = (Math.random() * 45 + 45) * 1000;
-
     praiseTimeoutId = setTimeout(() => {
-        // Only speak if the session is active and there hasn't been recent movement
         if (isSessionActive && !isOnCooldown) {
-            const phrases = ["Great focus.", "You are doing well.", "Excellent stillness.", "Breathing in, breathing out."];
+            const phrases = ["Great focus.", "You are doing well.", "Excellent stillness."];
             const chosenPhrase = phrases[Math.floor(Math.random() * phrases.length)];
             speak(chosenPhrase);
         }
-        // Schedule the next random praise
         if (isSessionActive) {
             scheduleRandomPraise();
         }
@@ -78,12 +81,35 @@ function analyzeFrames() {
             difference += Math.abs(currentImageData.data[i] - lastImageData.data[i]);
         }
         
+        // --- UPDATED MOVEMENT DETECTION LOGIC ---
         if (difference > MOVEMENT_THRESHOLD && !isOnCooldown) {
             console.log("Movement Detected. Difference:", difference);
-            const phrases = ["Return to stillness.", "Gently bring your awareness back.", "Be present in this moment."];
-            const chosenPhrase = phrases[Math.floor(Math.random() * phrases.length)];
-            speak(chosenPhrase);
+
+            // 1. Check if we are already at the maximum allowed time
+            if (timeRemaining < maxSessionSeconds) {
+                // 2. Calculate a random penalty between 15 and 60 seconds
+                let secondsToAdd = Math.floor(Math.random() * 46) + 15;
+                
+                // 3. Ensure the penalty doesn't exceed the user's max time
+                const potentialNewTime = timeRemaining + secondsToAdd;
+                if (potentialNewTime > maxSessionSeconds) {
+                    secondsToAdd = maxSessionSeconds - timeRemaining;
+                }
+
+                // 4. Add the time and announce it
+                if (secondsToAdd > 0) {
+                    timeRemaining += secondsToAdd;
+                    timerElement.textContent = `Time Remaining: ${formatTime(timeRemaining)}`; // Update display immediately
+                    const phrases = [`Stillness lost. ${secondsToAdd} seconds added.`, `Movement detected. Adding ${secondsToAdd} seconds.`];
+                    const chosenPhrase = phrases[Math.floor(Math.random() * phrases.length)];
+                    speak(chosenPhrase);
+                }
+            } else {
+                // If already at max time, just give a simple reminder
+                speak("Return to stillness.");
+            }
             
+            // 5. Start cooldown period
             isOnCooldown = true;
             setTimeout(() => { isOnCooldown = false; }, COOLDOWN_SECONDS * 1000);
         }
@@ -101,7 +127,9 @@ async function startSession() {
         return;
     }
 
-    // UPDATED: Select a random duration up to the maximum set by the user
+    // NEW: Store the absolute maximum seconds for this session
+    maxSessionSeconds = maxDurationMinutes * 60;
+
     const randomDurationMinutes = Math.floor(Math.random() * maxDurationMinutes) + 1;
     timeRemaining = randomDurationMinutes * 60;
     timerElement.textContent = `Time Remaining: ${formatTime(timeRemaining)}`;
@@ -124,9 +152,9 @@ async function startSession() {
             isSessionActive = true;
             durationInput.disabled = true;
             toggleButton.textContent = "End Session";
-            statusElement.textContent = `Session active for ${randomDurationMinutes} minutes. Observing for stillness...`; // UPDATED
+            statusElement.textContent = `Session active for ${randomDurationMinutes} minutes. Observing for stillness...`;
             analyzeFrames();
-            scheduleRandomPraise(); // NEW: Start the random praise schedule
+            scheduleRandomPraise();
         };
     } catch (err) {
         console.error("Error accessing camera:", err);
@@ -135,31 +163,10 @@ async function startSession() {
     }
 }
 
-// UPDATED: Function to stop the session
+// Function to stop the session
 function stopSession(message = "Session ended. Well done.") {
-    clearTimeout(praiseTimeoutId); // NEW: Stop the praise scheduler
+    clearTimeout(praiseTimeoutId);
     clearInterval(sessionTimerInterval);
     isSessionActive = false;
     if (stream) {
-        stream.getTracks().forEach(track => track.stop());
-        video.srcObject = null;
-    }
-    durationInput.disabled = false;
-    toggleButton.textContent = "Start Session";
-    statusElement.textContent = message;
-    lastImageData = null;
-}
-
-// Load voices when they are available
-window.speechSynthesis.onvoiceschanged = () => {
-    voices = window.speechSynthesis.getVoices();
-};
-
-// --- EVENT LISTENER ---
-toggleButton.addEventListener('click', () => {
-    if (isSessionActive) {
-        stopSession();
-    } else {
-        startSession();
-    }
-});
+        stream.get
