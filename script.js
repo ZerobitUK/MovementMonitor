@@ -40,7 +40,7 @@ function speak(text) {
     const preferredVoiceName = "Google UK English Male";
     let selectedVoice = voices.find(voice => voice.name === preferredVoiceName);
     if (!selectedVoice) {
-        selectedVoice = voices.find(v => v.name.includes('Google UK') || v.name.includes('Female'));
+        selectedVoice = voices.find(v => v.name.includes('Google UK') || v.name.includes('Male'));
     }
     if (selectedVoice) {
         utterance.voice = selectedVoice;
