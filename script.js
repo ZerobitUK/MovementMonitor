@@ -18,7 +18,7 @@ let lastFrameData = null;
 let praiseTimeout;
 
 // --- CONFIGURATION ---
-const MOTION_THRESHOLD = 5; // Adjust this based on your camera/lighting
+const MOTION_THRESHOLD = 3; // Adjust this based on your camera/lighting
 const POSITIVE_PHRASES = ["Well done boy.", "You're making me proud.", "Good boy.", "Keep it up."];
 const NEGATIVE_PHRASES = ["Naughty boy, more time added.", "When will you learn? More time added.", "You need to learn to obey."];
 let maleVoice;
