@@ -1,5 +1,5 @@
 // --- CONFIGURATION ---
-const MOVEMENT_THRESHOLD = 80000; 
+const MOVEMENT_THRESHOLD = 40000; 
 const COOLDOWN_SECONDS = 8;       
 
 // --- DOM ELEMENTS ---
@@ -55,7 +55,7 @@ function scheduleRandomPraise() {
     const randomDelay = (Math.random() * 45 + 45) * 1000;
     praiseTimeoutId = setTimeout(() => {
         if (isSessionActive && !isOnCooldown) {
-            const phrases = ["Great focus.", "You are doing well.", "Excellent stillness."];
+            const phrases = ["Good boy.", "Good sissy.", "I hope you're enjoying this as much as I am."];
             const chosenPhrase = phrases[Math.floor(Math.random() * phrases.length)];
             speak(chosenPhrase);
         }
@@ -169,4 +169,25 @@ function stopSession(message = "Session ended. Well done.") {
     clearInterval(sessionTimerInterval);
     isSessionActive = false;
     if (stream) {
-        stream.get
+        stream.getTracks().forEach(track => track.stop());
+        video.srcObject = null;
+    }
+    durationInput.disabled = false;
+    toggleButton.textContent = "Start Session";
+    statusElement.textContent = message;
+    lastImageData = null;
+}
+
+// Load voices when they are available
+window.speechSynthesis.onvoiceschanged = () => {
+    voices = window.speechSynthesis.getVoices();
+};
+
+// --- EVENT LISTENER ---
+toggleButton.addEventListener('click', () => {
+    if (isSessionActive) {
+        stopSession();
+    } else {
+        startSession();
+    }
+});
