@@ -28,6 +28,22 @@ video {
     border: 1px solid #ddd;
 }
 
+/* NEW: Timer input field styling */
+.timer-setup {
+    margin-top: 20px;
+    font-size: 16px;
+}
+
+.timer-setup input {
+    width: 60px;
+    padding: 5px;
+    margin-left: 10px;
+    font-size: 16px;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    text-align: center;
+}
+
 button {
     background-color: #5d9cec;
     color: white;
@@ -41,11 +57,22 @@ button {
 }
 
 button:hover {
-    background-color: #4a8a Sde;
+    background-color: #4a8ade;
+}
+
+/* NEW: Container for status messages */
+.status-display {
+    margin-top: 20px;
+}
+
+#timer {
+    font-size: 1.2em;
+    font-weight: bold;
+    color: #333;
 }
 
 #status {
-    margin-top: 20px;
     font-style: italic;
     color: #666;
+    margin-top: 5px;
 }
