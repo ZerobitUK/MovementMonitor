@@ -3,30 +3,37 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Meditation Assistant</title>
+    <title>Time Out Corner</title>
     <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection"></script>
 </head>
 <body>
     <div class="container">
-        <h1>Meditation Assistant</h1>
-        <p>Set a time, find a comfortable position, and begin. The assistant will gently remind you to remain still if it detects movement.</p>
+        <h1>Time Out Corner</h1>
+        <p>Stay inside the green box. If you move out, the timer will reset!</p>
         
-        <video id="video" width="300" height="225" autoplay muted></video>
-        
-        <canvas id="canvas" style="display: none;"></canvas>
+        <div id="loading">Loading AI Model... Please Wait.</div>
 
-        <div class="timer-setup">
-            <label for="duration">Session time (minutes):</label>
-            <input type="number" id="duration" value="10" min="1">
-        </div>
-
-        <button id="toggleButton">Start Session</button>
-        
-        <div class="status-display">
-            <p id="timer">Time Remaining: 00:00</p>
-            <p id="status">Session not started.</p>
+        <div class="main-content" id="main-content" style="display: none;">
+            <div class="video-container">
+                <video id="webcam" autoplay playsinline></video>
+                <canvas id="canvas"></canvas>
+            </div>
+            <div class="controls">
+                <div class="timer-container">
+                    <span>Time Left:</span>
+                    <div id="timer">60</div>
+                </div>
+                <div class="input-group">
+                    <label for="timeout-duration">Set Duration (seconds):</label>
+                    <input type="number" id="timeout-duration" value="60" min="10" max="600">
+                </div>
+                <button id="start-btn">Start Time Out</button>
+            </div>
         </div>
     </div>
+
     <script src="script.js"></script>
 </body>
 </html>
