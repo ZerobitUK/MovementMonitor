@@ -20,13 +20,13 @@
                 <div id="status-message" style="color: red; font-weight: bold; height: 20px;"></div>
                 <div class="timer-container">
                     <span>Time Left:</span>
-                    <div id="timer">...</div>
+                    <div id="timer">0:00</div>
                 </div>
                 <div class="input-group">
-                    <label for="min-duration">Min Time (sec):</label>
-                    <input type="number" id="min-duration" value="60" min="10" max="600">
-                    <label for="max-duration">Max Time (sec):</label>
-                    <input type="number" id="max-duration" value="180" min="10" max="1800">
+                    <label for="min-duration">Min Time (minutes):</label>
+                    <input type="number" id="min-duration" value="2" min="1" max="60">
+                    <label for="max-duration">Max Time (minutes):</label>
+                    <input type="number" id="max-duration" value="5" min="1" max="120">
                 </div>
                 <button id="start-btn">Start Time Out</button>
             </div>
