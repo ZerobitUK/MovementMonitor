@@ -10,50 +10,49 @@ const maxDurationInput = document.getElementById('max-duration');
 const statusMessage = document.getElementById('status-message');
 
 let timerInterval;
-let timeLeft;
-let initialSessionDuration;
+let timeLeft; // This will now store total seconds
+let initialSessionDurationInMinutes;
 let isTimerRunning = false;
 let animationFrameId;
 let lastFrameData = null;
 let praiseTimeout;
 
 // --- CONFIGURATION ---
-const MOTION_THRESHOLD = 3; // Adjust this based on your camera/lighting
+const MOTION_THRESHOLD = 3; // Lower this if it's too sensitive
+const PENALTY_MINUTES_MIN = 1; // Minimum penalty in minutes
+const PENALTY_MINUTES_MAX = 3; // Maximum penalty in minutes
 const POSITIVE_PHRASES = ["Well done boy.", "You're making me proud.", "Good boy.", "Keep it up."];
-const NEGATIVE_PHRASES = ["Naughty boy, more time added.", "When will you learn? More time added.", "You need to learn to obey."];
+const NEGATIVE_PHRASES = ["Naughty boy. More time added.", "When will you learn?", "You need to learn to obey. More time added."];
 let maleVoice;
 // --- END CONFIGURATION ---
 
 // ### SPEECH SYNTHESIS SETUP ###
 function setupSpeech() {
     const voices = window.speechSynthesis.getVoices();
-    // Find a UK male voice, with fallbacks
     maleVoice = voices.find(voice => voice.name === 'Google UK English Male') ||
                 voices.find(voice => voice.name === 'Daniel') ||
                 voices.find(voice => voice.lang.startsWith('en') && voice.name.toLowerCase().includes('male'));
-
-    if (!maleVoice) {
-        console.warn("No male voice found, using default.");
-        maleVoice = voices.find(voice => voice.lang.startsWith('en')); // Fallback to any English voice
-    }
+    if (!maleVoice) maleVoice = voices.find(voice => voice.lang.startsWith('en'));
 }
-// Voices are loaded asynchronously
 window.speechSynthesis.onvoiceschanged = setupSpeech;
-setupSpeech(); // Initial call
+setupSpeech();
 
 function speak(text) {
-    if (!maleVoice) {
-        console.error("Voice not ready.");
-        return;
-    }
+    if (!maleVoice) return;
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.voice = maleVoice;
     utterance.rate = 0.9;
-    window.speechSynthesis.cancel(); // Stop any previous speech
+    window.speechSynthesis.cancel();
     window.speechSynthesis.speak(utterance);
 }
 // ### END SPEECH SECTION ###
 
+// ### HELPER FUNCTION to format time ###
+function formatTime(totalSeconds) {
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
+}
 
 async function init() {
     try {
@@ -65,12 +64,12 @@ async function init() {
             detectMotionLoop();
         });
     } catch (error) {
-        console.error("Error initializing:", error);
         statusMessage.innerText = "Error: Could not access webcam.";
     }
 }
 
 function detectMotionLoop() {
+    // This function's logic remains the same
     const safeZone = { x: 0.25, y: 0.15, width: 0.5, height: 0.7 };
     const zx = Math.floor(safeZone.x * canvas.width);
     const zy = Math.floor(safeZone.y * canvas.height);
@@ -94,7 +93,6 @@ function detectMotionLoop() {
             motionDetected = true;
         }
     }
-
     lastFrameData = currentFrameData;
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -106,7 +104,6 @@ function detectMotionLoop() {
         penalizeUser();
         flashScreenRed();
     }
-
     animationFrameId = requestAnimationFrame(detectMotionLoop);
 }
 
@@ -124,12 +121,12 @@ function startTimer() {
 
     timerInterval = setInterval(() => {
         timeLeft--;
-        timerDisplay.textContent = timeLeft;
+        timerDisplay.textContent = formatTime(timeLeft); // Use the formatter
         if (timeLeft <= 0) {
             clearInterval(timerInterval);
-            clearTimeout(praiseTimeout); // Stop any pending praise
+            clearTimeout(praiseTimeout);
             isTimerRunning = false;
-            const completionMessage = `Session complete. You served a total of ${initialSessionDuration} seconds. Well done.`;
+            const completionMessage = `Session complete. You served a total of ${initialSessionDurationInMinutes} minutes. Well done.`;
             alert(completionMessage);
             speak(completionMessage);
             startBtn.disabled = false;
@@ -145,43 +142,50 @@ function penalizeUser() {
     if (!isTimerRunning) return;
     
     clearInterval(timerInterval);
-    clearTimeout(praiseTimeout); // Stop praise schedule
+    clearTimeout(praiseTimeout);
     isTimerRunning = false;
 
-    const penaltyTime = Math.floor(Math.random() * 61) + 30; // Random penalty between 30-90 seconds
+    // Generate random penalty in MINUTES
+    const penaltyMinutes = Math.floor(Math.random() * (PENALTY_MINUTES_MAX - PENALTY_MINUTES_MIN + 1)) + PENALTY_MINUTES_MIN;
+    const penaltySeconds = penaltyMinutes * 60; // Convert to seconds
+
     const randomNegativePhrase = NEGATIVE_PHRASES[Math.floor(Math.random() * NEGATIVE_PHRASES.length)];
-    
-    speak(randomNegativePhrase);
-    statusMessage.textContent = `PENALTY! +${penaltyTime} seconds.`;
+    const penaltyMessage = `${penaltyMinutes} more ${penaltyMinutes > 1 ? 'minutes' : 'minute'} added.`;
+
+    speak(`${randomNegativePhrase} ${penaltyMessage}`);
+    statusMessage.textContent = `PENALTY! +${penaltyMinutes} min.`;
     setTimeout(() => { statusMessage.textContent = ''; }, 4000);
     
-    timeLeft += penaltyTime;
-    timerDisplay.textContent = timeLeft;
+    timeLeft += penaltySeconds; // Add penalty in seconds
+    timerDisplay.textContent = formatTime(timeLeft);
 
     setTimeout(() => { startTimer(); }, 1000);
 }
 
 function scheduleRandomPraise() {
     if (!isTimerRunning) return;
-    // Schedule praise for a random time between 25 and 45 seconds from now
     const randomDelay = (Math.random() * 20000) + 25000;
     praiseTimeout = setTimeout(() => {
         const randomPositivePhrase = POSITIVE_PHRASES[Math.floor(Math.random() * POSITIVE_PHRASES.length)];
         speak(randomPositivePhrase);
-        scheduleRandomPraise(); // Schedule the next one
+        scheduleRandomPraise();
     }, randomDelay);
 }
 
 startBtn.addEventListener('click', () => {
     const min = parseInt(minDurationInput.value, 10);
     const max = parseInt(maxDurationInput.value, 10);
-    if (min >= max) {
-        alert("Min time must be less than max time.");
+    if (min > max) {
+        alert("Min time cannot be greater than max time.");
         return;
     }
-    timeLeft = Math.floor(Math.random() * (max - min + 1)) + min;
-    initialSessionDuration = timeLeft; // Store the starting time
-    timerDisplay.textContent = timeLeft;
+    // Generate random time in MINUTES
+    const randomMinutes = Math.floor(Math.random() * (max - min + 1)) + min;
+    initialSessionDurationInMinutes = randomMinutes; // Store starting minutes
+    
+    timeLeft = randomMinutes * 60; // Convert to SECONDS for countdown
+    
+    timerDisplay.textContent = formatTime(timeLeft);
     startTimer();
 });
 
